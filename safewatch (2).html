@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SafeWatch — Anti-Bullying Camera System</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#080a0e;--bg2:#0d1117;--surface:#111419;--surface2:#181c23;
+  --border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.1);
+  --text:#e8ecf0;--muted:#5a6270;--muted2:#8a93a0;
+  --green:#00e676;--green-dim:rgba(0,230,118,0.1);
+  --red:#ff3d3d;--red-dim:rgba(255,61,61,0.1);
+  --amber:#ffab00;--amber-dim:rgba(255,171,0,0.1);
+}
+html{scroll-behavior:smooth}
+body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,230,118,0.015) 1px,transparent 1px),linear-gradient(90deg,rgba(0,230,118,0.015) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
+nav{position:fixed;top:0;left:0;right:0;z-index:200;display:flex;align-items:center;justify-content:space-between;padding:0 2rem;height:56px;background:rgba(8,10,14,0.92);border-bottom:1px solid var(--border);backdrop-filter:blur(12px)}
+.nav-brand{display:flex;align-items:center;gap:10px}
+.nav-logo{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:1rem;letter-spacing:0.08em;color:var(--green)}
+.nav-logo span{color:var(--text)}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+.nav-right{display:flex;align-items:center;gap:1.5rem}
+.nav-stat{font-family:'IBM Plex Mono',monospace;font-size:0.72rem;color:var(--muted2);display:flex;align-items:center;gap:6px}
+.nav-stat strong{color:var(--text);font-weight:500}
+.nav-time{font-family:'IBM Plex Mono',monospace;font-size:0.8rem;color:var(--green);letter-spacing:0.05em}
+.app{display:grid;grid-template-columns:300px 1fr 320px;height:100vh;overflow:hidden}
+.sidebar{background:var(--surface);border-right:1px solid var(--border);overflow-y:auto;z-index:1}
+.sidebar::-webkit-scrollbar{width:4px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+.sidebar-section{padding:1.25rem;border-bottom:1px solid var(--border)}
+.sidebar-title{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);margin-bottom:1rem}
+.cam-item{display:flex;align-items:center;gap:10px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);margin-bottom:8px;cursor:pointer;transition:all 0.2s;position:relative}
+.cam-item:hover,.cam-item.active{border-color:var(--green);background:rgba(0,230,118,0.04)}
+.cam-item.active::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--green);border-radius:1px}
+.cam-thumb{width:52px;height:36px;border-radius:4px;background:var(--bg2);overflow:hidden;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:0.65rem;color:var(--muted);font-family:'IBM Plex Mono',monospace}
+.cam-info{flex:1;min-width:0}
+.cam-name{font-size:0.85rem;font-weight:500;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cam-meta{font-family:'IBM Plex Mono',monospace;font-size:0.68rem;color:var(--muted2)}
+.cam-status{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.cam-status.online{background:var(--green);box-shadow:0 0 6px var(--green)}
+.cam-status.offline{background:var(--muted)}
+.cam-status.alert{background:var(--red);box-shadow:0 0 6px var(--red);animation:blink 0.5s infinite}
+.cam-status.connecting{background:var(--amber);animation:blink 1s infinite}
+.cam-remove{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:20px;height:20px;border-radius:4px;border:1px solid rgba(255,61,61,0.3);background:transparent;color:var(--red);font-size:0.75rem;cursor:pointer;display:none;align-items:center;justify-content:center;padding:0;transition:all 0.2s;flex-shrink:0;z-index:2}
+.cam-item:hover .cam-remove{display:flex}
+.cam-remove:hover{background:var(--red-dim);border-color:var(--red)}
+.always-analyze-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--bg2);cursor:pointer;transition:all 0.2s;font-family:'IBM Plex Mono',monospace;font-size:0.72rem;color:var(--muted2);user-select:none}
+.always-analyze-row.active{border-color:var(--green);color:var(--green);background:var(--green-dim)}
+.aa-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0;transition:all 0.2s}
+.always-analyze-row.active .aa-dot{background:var(--green);box-shadow:0 0 6px var(--green);animation:blink 1s infinite}
+.aa-interval{font-size:0.65rem;margin-left:auto;opacity:0.7}
+.add-cam-form{display:flex;flex-direction:column;gap:8px}
+.form-row{display:flex;flex-direction:column;gap:4px}
+.form-label{font-size:0.72rem;color:var(--muted2);font-family:'IBM Plex Mono',monospace;letter-spacing:0.05em}
+input[type=text],input[type=file],select,textarea{background:var(--bg2);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-family:'IBM Plex Sans',sans-serif;font-size:0.85rem;padding:8px 10px;outline:none;transition:border-color 0.2s;width:100%}
+input[type=text]:focus,select:focus,textarea:focus{border-color:var(--green)}
+input[type=file]{padding:6px 10px;cursor:pointer}
+select option{background:var(--surface2)}
+.btn{padding:9px 16px;border-radius:6px;border:none;font-family:'IBM Plex Mono',monospace;font-size:0.78rem;font-weight:500;cursor:pointer;transition:all 0.2s;letter-spacing:0.04em}
+.btn-green{background:var(--green);color:#000}
+.btn-green:hover{filter:brightness(1.1)}
+.btn-outline{background:transparent;border:1px solid var(--border2);color:var(--muted2)}
+.btn-outline:hover{border-color:var(--green);color:var(--green)}
+.btn-danger{background:var(--red-dim);border:1px solid rgba(255,61,61,0.3);color:var(--red)}
+.btn-danger:hover{background:rgba(255,61,61,0.2)}
+.btn-sm{padding:6px 12px;font-size:0.72rem}
+.admin-form{display:flex;flex-direction:column;gap:8px}
+.stream-guide{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px;font-family:'IBM Plex Mono',monospace;font-size:0.65rem;color:var(--muted2);line-height:1.9;margin-top:8px}
+.stream-guide span{color:var(--green)}
+.stream-guide b{color:var(--text)}
+.tm-status{font-family:'IBM Plex Mono',monospace;font-size:0.68rem;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg2);color:var(--muted2);margin-top:6px;line-height:1.7}
+.tm-status.loaded{border-color:rgba(0,230,118,0.3);color:var(--green)}
+.tm-status.error{border-color:rgba(255,61,61,0.3);color:var(--red)}
+.main{display:flex;flex-direction:column;background:var(--bg2);overflow:hidden;position:relative}
+.main-header{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.5rem;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
+.view-title{font-size:0.9rem;font-weight:500;color:var(--text)}
+.view-sub{font-family:'IBM Plex Mono',monospace;font-size:0.7rem;color:var(--muted2);margin-top:2px}
+.main-controls{display:flex;gap:8px;align-items:center}
+.tab-bar{display:flex;border-bottom:1px solid var(--border);background:var(--surface);flex-shrink:0}
+.tab-btn{padding:10px 20px;font-family:'IBM Plex Mono',monospace;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted2);border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;transition:all 0.2s;margin-bottom:-1px}
+.tab-btn:hover{color:var(--text)}
+.tab-btn.active{color:var(--green);border-bottom-color:var(--green)}
+.alert-banner{position:absolute;top:0;left:0;right:0;background:rgba(255,61,61,0.9);padding:10px 1.5rem;display:flex;align-items:center;gap:12px;font-size:0.85rem;font-weight:500;transform:translateY(-100%);transition:transform 0.3s;z-index:10}
+.alert-banner.show{transform:translateY(0)}
+.alert-banner .btn-sm{background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.3)}
+.camera-view{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.camera-feed{flex:1;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#000}
+.stream-video{width:100%;height:100%;object-fit:contain;display:none}
+.stream-img{width:100%;height:100%;object-fit:contain;display:none}
+.feed-canvas{max-width:100%;max-height:100%;display:none}
+.feed-offline{display:flex;flex-direction:column;align-items:center;gap:16px;color:var(--muted)}
+.feed-offline svg{opacity:0.3}
+.feed-offline p{font-size:0.875rem;font-family:'IBM Plex Mono',monospace}
+.conn-overlay{position:absolute;inset:0;background:rgba(8,10,14,0.92);display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:8}
+.conn-overlay.show{display:flex}
+.conn-spinner{width:36px;height:36px;border:2px solid var(--border2);border-top-color:var(--green);border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.conn-msg{font-family:'IBM Plex Mono',monospace;font-size:0.78rem;color:var(--muted2);text-align:center;line-height:1.8}
+.conn-url{font-size:0.68rem;color:var(--muted);word-break:break-all;max-width:300px;text-align:center}
+.err-overlay{position:absolute;inset:0;background:rgba(8,10,14,0.95);display:none;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:8;padding:2rem;text-align:center}
+.err-overlay.show{display:flex}
+.err-title{font-family:'IBM Plex Mono',monospace;font-size:0.85rem;color:var(--red)}
+.err-body{font-size:0.78rem;color:var(--muted2);line-height:1.7;max-width:400px}
+.err-steps{text-align:left;background:var(--surface);border:1px solid var(--border2);border-radius:8px;padding:12px 16px;max-width:420px;width:100%}
+.err-steps div{font-family:'IBM Plex Mono',monospace;font-size:0.68rem;color:var(--muted2);line-height:2;border-bottom:0.5px solid var(--border);padding-bottom:2px;margin-bottom:2px}
+.err-steps div:last-child{border:none;margin:0}
+.err-steps span{color:var(--green)}
+.scan-overlay{position:absolute;inset:0;pointer-events:none;display:none}
+.scan-overlay.active{display:block}
+.scan-line{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(0,230,118,0.4),transparent);opacity:0.6;animation:scanMove 3s linear infinite}
+@keyframes scanMove{0%{top:0;opacity:0}10%{opacity:0.6}90%{opacity:0.6}100%{top:100%;opacity:0}}
+.corner-tl,.corner-tr,.corner-bl,.corner-br{position:absolute;width:20px;height:20px;border-color:var(--green);border-style:solid;opacity:0.6}
+.corner-tl{top:12px;left:12px;border-width:2px 0 0 2px}
+.corner-tr{top:12px;right:12px;border-width:2px 2px 0 0}
+.corner-bl{bottom:12px;left:12px;border-width:0 0 2px 2px}
+.corner-br{bottom:12px;right:12px;border-width:0 2px 2px 0}
+.detect-boxes{position:absolute;inset:0;pointer-events:none}
+.detect-box{position:absolute;border:2px solid var(--red);border-radius:2px;animation:boxPulse 1s ease-in-out infinite}
+.detect-box-label{position:absolute;top:-22px;left:0;background:var(--red);color:#fff;font-size:0.65rem;font-family:'IBM Plex Mono',monospace;padding:2px 7px;border-radius:3px;white-space:nowrap}
+@keyframes boxPulse{0%,100%{opacity:1}50%{opacity:0.6}}
+.stream-badge{position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.7);border:1px solid var(--border2);border-radius:4px;padding:3px 10px;font-family:'IBM Plex Mono',monospace;font-size:0.65rem;color:var(--green);z-index:5;backdrop-filter:blur(4px)}
+.stream-badge.demo{color:var(--amber)}
+.stream-badge.live{color:var(--green)}
+.stream-badge.error{color:var(--red)}
+.tm-overlay{position:absolute;bottom:40px;left:12px;background:rgba(0,0,0,0.75);border:1px solid var(--border2);border-radius:6px;padding:8px 12px;font-family:'IBM Plex Mono',monospace;font-size:0.68rem;z-index:6;backdrop-filter:blur(4px);min-width:160px;display:none}
+.tm-overlay.show{display:block}
+.tm-pred-row{display:flex;justify-content:space-between;gap:12px;margin-bottom:4px;color:var(--muted2)}
+.tm-pred-row:last-child{margin-bottom:0}
+.tm-pred-row.top{color:var(--green);font-weight:600}
+.tm-bar-wrap{width:60px;height:4px;background:var(--border);border-radius:99px;overflow:hidden;margin-top:1px}
+.tm-bar{height:100%;background:var(--green);border-radius:99px;transition:width 0.3s}
+.fullscreen-btn{position:absolute;bottom:12px;right:12px;background:rgba(0,0,0,0.6);border:1px solid var(--border2);border-radius:4px;color:var(--muted2);font-size:0.65rem;padding:4px 10px;cursor:pointer;font-family:'IBM Plex Mono',monospace;z-index:5;transition:all 0.2s;backdrop-filter:blur(4px)}
+.fullscreen-btn:hover{color:var(--green);border-color:var(--green)}
+.feed-info{display:flex;align-items:center;gap:1.5rem;padding:10px 1.5rem;background:var(--surface);border-top:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.feed-stat{display:flex;align-items:center;gap:6px;font-family:'IBM Plex Mono',monospace;font-size:0.72rem;color:var(--muted2)}
+.feed-stat strong{color:var(--text);font-weight:500}
+.feed-stat .dot{width:6px;height:6px;border-radius:50%}
+.demo-badge{position:absolute;bottom:12px;right:80px;background:rgba(255,171,0,0.15);border:1px solid rgba(255,171,0,0.3);border-radius:4px;padding:3px 10px;font-family:'IBM Plex Mono',monospace;font-size:0.65rem;color:var(--amber);z-index:5}
+.verbal-panel{flex:1;display:none;flex-direction:column;overflow:hidden}
+.verbal-panel.active{display:flex}
+.verbal-layout{display:grid;grid-template-columns:1fr 1fr;gap:0;flex:1;overflow:hidden}
+.verbal-left{border-right:1px solid var(--border);display:flex;flex-direction:column;padding:1.25rem;overflow:hidden}
+.verbal-right{display:flex;flex-direction:column;padding:1.25rem;overflow:hidden}
+.mic-wrap{display:flex;flex-direction:column;align-items:center;gap:1rem;padding:1.5rem 0}
+.mic-btn{width:72px;height:72px;border-radius:50%;border:2px solid var(--border2);background:var(--surface2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.3s}
+.mic-btn:hover{border-color:var(--green)}
+.mic-btn.recording{border-color:var(--red);background:var(--red-dim);animation:micPulse 1.2s ease-in-out infinite}
+@keyframes micPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,61,61,0.4)}50%{box-shadow:0 0 0 16px rgba(255,61,61,0)}}
+.mic-icon{font-size:1.6rem}
+.mic-label{font-family:'IBM Plex Mono',monospace;font-size:0.72rem;color:var(--muted2);letter-spacing:0.1em}
+.mic-label.active{color:var(--red)}
+.waveform{height:48px;display:flex;align-items:center;justify-content:center;gap:2px;margin:0.5rem 0}
+.wave-bar{width:3px;border-radius:2px;background:var(--border2);transition:height 0.1s}
+.wave-bar.active{background:var(--red)}
+.transcript-box{flex:1;overflow-y:auto;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:0.85rem;line-height:1.8;color:var(--text);min-height:80px}
+.transcript-box::-webkit-scrollbar{width:3px}
+.transcript-box::-webkit-scrollbar-thumb{background:var(--border2)}
+.transcript-placeholder{color:var(--muted);font-style:italic;font-size:0.82rem}
+.transcript-interim{color:var(--muted2)}
+.transcript-final{color:var(--text)}
+.transcript-flagged{background:rgba(255,61,61,0.12);border-radius:3px;padding:1px 3px;color:#ff8080}
+.source-tabs{display:flex;gap:6px;margin-bottom:1rem;flex-wrap:wrap}
+.source-tab{flex:1;padding:7px 10px;border:1px solid var(--border2);border-radius:6px;background:transparent;color:var(--muted2);font-family:'IBM Plex Mono',monospace;font-size:0.68rem;cursor:pointer;text-align:center;transition:all 0.2s;min-width:60px}
+.source-tab.active{border-color:var(--green);color:var(--green);background:var(--green-dim)}
+.verbal-analyze-btn{padding:8px 14px;background:var(--green);color:#000;border:none;border-radius:6px;font-family:'IBM Plex Mono',monospace;font-size:0.72rem;font-weight:600;cursor:pointer;transition:filter 0.2s}
+.verbal-analyze-btn:hover{filter:brightness(1.1)}
+.verbal-result{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px}
+.verbal-result::-webkit-scrollbar{width:3px}
+.verbal-result::-webkit-scrollbar-thumb{background:var(--border2)}
+.vr-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;color:var(--muted);font-size:0.8rem;text-align:center}
+.vr-card{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px}
+.vr-card.danger{border-color:rgba(255,61,61,0.35);background:rgba(255,61,61,0.05)}
+.vr-card.warning{border-color:rgba(255,171,0,0.3);background:rgba(255,171,0,0.04)}
+.vr-card.safe{border-color:rgba(0,230,118,0.25);background:rgba(0,230,118,0.04)}
+.vr-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.vr-verdict{font-family:'IBM Plex Mono',monospace;font-size:0.8rem;font-weight:600}
+.vr-verdict.danger{color:var(--red)}
+.vr-verdict.warning{color:var(--amber)}
+.vr-verdict.safe{color:var(--green)}
+.vr-meter{height:4px;background:var(--bg2);border-radius:99px;overflow:hidden;margin-bottom:10px}
+.vr-fill{height:100%;border-radius:99px;transition:width 0.6s ease}
+.vr-fill.danger{background:var(--red)}
+.vr-fill.warning{background:var(--amber)}
+.vr-fill.safe{background:var(--green)}
+.vr-tags{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.vr-tag{font-size:0.65rem;padding:2px 8px;border-radius:3px;font-family:'IBM Plex Mono',monospace;background:rgba(255,61,61,0.1);color:var(--red);border:1px solid rgba(255,61,61,0.15)}
+.vr-summary{font-size:0.8rem;color:var(--muted2);line-height:1.6;margin-bottom:8px}
+.vr-time{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;color:var(--muted)}
+.alerts-panel{background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;z-index:1}
+.panel-header{padding:1rem 1.25rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.panel-title{font-family:'IBM Plex Mono',monospace;font-size:0.72rem;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted2)}
+.badge{font-family:'IBM Plex Mono',monospace;font-size:0.68rem;padding:2px 8px;border-radius:3px;font-weight:500}
+.badge-red{background:var(--red-dim);color:var(--red);border:1px solid rgba(255,61,61,0.2)}
+.badge-green{background:var(--green-dim);color:var(--green);border:1px solid rgba(0,230,118,0.2)}
+.alerts-list{flex:1;overflow-y:auto;padding:0.75rem}
+.alerts-list::-webkit-scrollbar{width:3px}
+.alerts-list::-webkit-scrollbar-thumb{background:var(--border2)}
+.alert-item{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;transition:border-color 0.2s}
+.alert-item:hover{border-color:var(--border2)}
+.alert-item.new-alert{border-color:var(--red);animation:alertFlash 0.5s ease 3}
+@keyframes alertFlash{0%,100%{background:var(--surface2)}50%{background:rgba(255,61,61,0.08)}}
+.alert-header{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px}
+.alert-severity{font-size:0.72rem;font-weight:500;font-family:'IBM Plex Mono',monospace}
+.alert-severity.danger{color:var(--red)}
+.alert-severity.warning{color:var(--amber)}
+.alert-time{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;color:var(--muted);white-space:nowrap}
+.alert-cam{font-size:0.78rem;font-weight:500;margin-bottom:4px}
+.alert-desc{font-size:0.78rem;color:var(--muted2);line-height:1.5;margin-bottom:8px}
+.alert-cats{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.alert-cat{font-size:0.65rem;padding:2px 7px;border-radius:3px;background:rgba(255,61,61,0.1);color:var(--red);border:1px solid rgba(255,61,61,0.15);font-family:'IBM Plex Mono',monospace}
+.alert-notified{font-family:'IBM Plex Mono',monospace;font-size:0.65rem;color:var(--green);display:flex;align-items:center;gap:4px}
+.alerts-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3rem 1rem;text-align:center;gap:10px;color:var(--muted);font-size:0.85rem}
+.toast-container{position:fixed;top:70px;right:20px;z-index:999;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--surface2);border:1px solid var(--border2);border-left:3px solid var(--red);border-radius:8px;padding:12px 16px;min-width:280px;max-width:360px;animation:toastIn 0.3s ease;box-shadow:0 8px 32px rgba(0,0,0,0.5)}
+.toast.success{border-left-color:var(--green)}
+.toast.warning{border-left-color:var(--amber)}
+@keyframes toastIn{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes toastOut{from{opacity:1}to{opacity:0;transform:translateX(110%)}}
+.toast-title{font-size:0.85rem;font-weight:500;margin-bottom:4px}
+@media(max-width:1100px){.app{grid-template-columns:240px 1fr 260px}}
+@media(max-width:800px){.app{grid-template-columns:1fr;height:auto}.sidebar,.alerts-panel{max-height:300px}.camera-feed{min-height:300px}.verbal-layout{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<nav>
+  <div class="nav-brand">
+    <div class="status-dot"></div>
+    <div class="nav-logo">SAFE<span>WATCH</span></div>
+  </div>
+  <div class="nav-right">
+    <div class="nav-stat">Cameras: <strong id="camCount">0</strong></div>
+    <div class="nav-stat">Alerts: <strong id="alertCount">0</strong></div>
+    <div class="nav-time" id="clockEl">--:--:--</div>
+  </div>
+</nav>
+<div class="toast-container" id="toastContainer"></div>
+<div class="app" style="padding-top:56px">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-title">Active Cameras</div>
+      <div id="cameraList"><div style="color:var(--muted);font-size:0.8rem;font-family:'IBM Plex Mono',monospace">No cameras connected.<br/>Add one below.</div></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Add Camera</div>
+      <div class="add-cam-form">
+        <div class="form-row">
+          <label class="form-label">Camera Name</label>
+          <input type="text" id="camName" placeholder="e.g. Hallway Cam 1"/>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Source Type</label>
+          <select id="camProtocol" onchange="updateStreamGuide()">
+            <option value="phone">📱 Phone / Webcam (this device)</option>
+            <option value="mjpeg">🌐 MJPEG Stream (IP camera)</option>
+            <option value="hls">📡 HLS Stream (go2rtc / Frigate)</option>
+            <option value="webrtc">⚡ WebRTC (go2rtc / Frigate)</option>
+            <option value="snapshot">📸 Snapshot Polling (JPEG URL)</option>
+            <option value="demo">🎮 Demo (Simulated)</option>
+          </select>
+        </div>
+        <div class="form-row" id="urlRow" style="display:none">
+          <label class="form-label">Stream URL</label>
+          <input type="text" id="camUrl" placeholder="http://192.168.1.x:1984/..."/>
+        </div>
+        <div class="form-row" id="phoneRow">
+          <label class="form-label">Camera Device</label>
+          <select id="deviceSelect"><option value="">Default camera</option></select>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Location</label>
+          <input type="text" id="camLocation" placeholder="e.g. Main Hallway"/>
+        </div>
+        <div class="stream-guide" id="streamGuide">
+          <b>Phone/Webcam:</b> Uses your device camera directly.<br/>
+          <span>No URL needed</span> — works on phones, tablets, laptops.<br/>
+          Compatible with <b>SSL (HTTPS)</b> deployments automatically.
+        </div>
+        <button class="btn btn-green" onclick="addCamera()" style="margin-top:4px">+ Connect Camera</button>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Teachable Machine AI Model</div>
+      <div style="font-size:0.78rem;color:var(--muted2);margin-bottom:10px;line-height:1.6">Load your Google Teachable Machine model to detect fighting, aggression, or custom behaviours.</div>
+      <div class="form-row">
+        <label class="form-label">Model Type</label>
+        <select id="tmModelType">
+          <option value="image">Image Classification</option>
+          <option value="pose">Pose Detection</option>
+        </select>
+      </div>
+      <div class="form-row" style="margin-top:8px">
+        <label class="form-label">Option A — Teachable Machine URL</label>
+        <input type="text" id="tmUrl" placeholder="https://teachablemachine.withgoogle.com/models/xxxxx/"/>
+      </div>
+      <div class="form-row" style="margin-top:8px">
+        <label class="form-label">Option B — Upload model.json</label>
+        <input type="file" id="tmModelJson" accept=".json"/>
+        <label class="form-label" style="margin-top:4px">Upload metadata.json</label>
+        <input type="file" id="tmMetadata" accept=".json"/>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="loadTMModel()" style="margin-top:8px;width:100%">Load Model</button>
+      <div class="tm-status" id="tmStatus">No model loaded — Claude AI analysis active</div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Admin Notifications</div>
+      <div class="admin-form">
+        <div class="form-row">
+          <label class="form-label">Admin Name</label>
+          <input type="text" id="adminName" value="Admin"/>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Email Address</label>
+          <input type="text" id="adminEmail" placeholder="admin@school.edu"/>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Slack / Teams Webhook</label>
+          <input type="text" id="webhookUrl" placeholder="https://hooks.slack.com/..."/>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Pushover User Key</label>
+          <input type="text" id="pushoverKey" placeholder="your-pushover-user-key"/>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Pushover App Token</label>
+          <input type="text" id="pushoverToken" placeholder="your-pushover-app-token"/>
+        </div>
+        <div class="form-row">
+          <label class="form-label">Alert Sensitivity</label>
+          <select id="sensitivity">
+            <option value="high">High — warnings + danger</option>
+            <option value="danger" selected>Medium — danger only</option>
+          </select>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="saveAdminSettings()" style="margin-top:4px">Save Settings</button>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Monitoring</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="btn btn-green btn-sm" id="monitorBtn" onclick="toggleMonitoring()">▶ Start Monitoring</button>
+        <button class="btn btn-outline btn-sm" onclick="exportLog()">↓ Export Alert Log</button>
+        <button class="btn btn-danger btn-sm" onclick="clearAlerts()">✕ Clear Alerts</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="main-header">
+      <div>
+        <div class="view-title" id="feedTitle">No Camera Selected</div>
+        <div class="view-sub" id="feedSub">Add a camera or select one to begin</div>
+      </div>
+      <div class="main-controls">
+        <button class="btn btn-outline btn-sm" id="snapBtn" onclick="takeSnapshot()" style="display:none">📷 Snapshot</button>
+        <button class="btn btn-outline btn-sm" id="analyzeNowBtn" onclick="analyzeNow()" style="display:none">🔍 Analyze Now</button>
+        <button class="btn btn-outline btn-sm" id="reconnectBtn" onclick="reconnectCam()" style="display:none">↺ Reconnect</button>
+      </div>
+    </div>
+    <div class="tab-bar">
+      <button class="tab-btn active" id="tabCamera" onclick="switchTab('camera')">📹 Camera Feed</button>
+      <button class="tab-btn" id="tabVerbal" onclick="switchTab('verbal')">🎤 Verbal Abuse</button>
+    </div>
+    <div class="alert-banner" id="alertBanner">
+      <span>⚠</span><span id="alertBannerText">Bullying detected!</span>
+      <div style="flex:1"></div>
+      <button class="btn btn-sm" onclick="dismissBanner()">Dismiss</button>
+    </div>
+
+    <!-- CAMERA VIEW -->
+    <div class="camera-view" id="cameraView">
+      <div class="camera-feed" id="cameraFeed">
+        <div class="feed-offline" id="feedOffline">
+          <svg width="64" height="64" viewBox="0 0 64 64" fill="none"><rect x="4" y="14" width="56" height="36" rx="4" stroke="#5a6270" stroke-width="2"/><circle cx="32" cy="32" r="10" stroke="#5a6270" stroke-width="2"/><circle cx="32" cy="32" r="4" fill="#5a6270"/></svg>
+          <p>No feed active</p>
+          <p style="font-size:0.75rem;color:var(--muted)">Add a camera to begin</p>
+        </div>
+        <video id="phoneVideo" class="stream-video" autoplay muted playsinline></video>
+        <video id="videoStream" class="stream-video" autoplay muted playsinline controls></video>
+        <img id="imgStream" class="stream-img" crossorigin="anonymous" alt="Camera stream"/>
+        <canvas id="feedCanvas" class="feed-canvas"></canvas>
+        <canvas id="captureCanvas" style="display:none"></canvas>
+        <div class="conn-overlay" id="connOverlay">
+          <div class="conn-spinner"></div>
+          <div class="conn-msg">Connecting to stream...</div>
+          <div class="conn-url" id="connUrl"></div>
+        </div>
+        <div class="err-overlay" id="errOverlay">
+          <div style="font-size:2rem;opacity:0.4">📡</div>
+          <div class="err-title" id="errTitle">Stream connection failed</div>
+          <div class="err-body" id="errBody"></div>
+          <div class="err-steps" id="errSteps" style="display:none"></div>
+        </div>
+        <div class="scan-overlay" id="scanOverlay">
+          <div class="scan-line"></div>
+          <div class="corner-tl"></div><div class="corner-tr"></div>
+          <div class="corner-bl"></div><div class="corner-br"></div>
+        </div>
+        <div class="detect-boxes" id="detectBoxes"></div>
+        <div class="stream-badge live" id="streamBadge" style="display:none">● LIVE</div>
+        <div class="tm-overlay" id="tmOverlay"></div>
+        <div class="demo-badge" id="demoBadge" style="display:none">DEMO MODE</div>
+        <button class="fullscreen-btn" onclick="toggleFullscreen()" style="display:none" id="fsBtn">⛶ Fullscreen</button>
+      </div>
+      <div class="feed-info">
+        <div class="feed-stat"><div class="dot" style="background:var(--green)"></div>Status: <strong id="feedStatus">Idle</strong></div>
+        <div class="feed-stat">Source: <strong id="feedType">—</strong></div>
+        <div class="feed-stat">Last scan: <strong id="lastScan">—</strong></div>
+        <div style="flex:1"></div>
+        <div class="feed-stat" id="monStatus">Monitoring: <strong>OFF</strong></div>
+      </div>
+    </div>
+
+    <!-- VERBAL VIEW -->
+    <div class="verbal-panel" id="verbalView">
+      <div class="verbal-layout">
+        <div class="verbal-left">
+          <div class="sidebar-title" style="margin-bottom:0.75rem">Audio Input</div>
+          <div class="source-tabs">
+            <button class="source-tab active" id="srcMic" onclick="setSource('mic')">🎤 Mic</button>
+            <button class="source-tab" id="srcCam" onclick="setSource('cam')">📹 Cam Mic</button>
+            <button class="source-tab" id="srcType" onclick="setSource('type')">⌨ Type</button>
+            <button class="source-tab" id="srcDemo" onclick="setSource('demo')">🎲 Demo</button>
+          </div>
+          <div id="micInputPanel">
+            <div class="mic-wrap">
+              <button class="mic-btn" id="micBtn" onclick="toggleMic()"><span class="mic-icon">🎤</span></button>
+              <span class="mic-label" id="micLabel">CLICK TO RECORD</span>
+            </div>
+            <div class="waveform" id="waveform"></div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <div class="sidebar-title" style="margin-bottom:0">Live Transcript</div>
+              <button class="btn btn-outline btn-sm" style="font-size:0.65rem;padding:3px 8px" onclick="clearTranscript()">Clear</button>
+            </div>
+            <div class="transcript-box" id="transcriptBox"><span class="transcript-placeholder">Start recording — speech appears here in real time...</span></div>
+            <div style="margin-top:10px;display:flex;gap:8px">
+              <button class="verbal-analyze-btn" style="flex:1" onclick="analyzeTranscript()">Analyze Transcript →</button>
+              <button class="btn btn-outline btn-sm" onclick="injectDemoSpeech()">Demo</button>
+            </div>
+          </div>
+          <div id="camInputPanel" style="display:none">
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:12px;font-size:0.82rem;color:var(--muted2);line-height:1.7">
+              Uses the microphone from the <strong style="color:var(--text)">active camera device</strong> or phone camera's built-in mic for real-time verbal abuse detection.
+            </div>
+            <button class="verbal-analyze-btn" id="camMicBtn" onclick="toggleCamMic()" style="width:100%">🎤 Start Camera Microphone</button>
+            <div class="waveform" id="camWaveform" style="margin-top:10px"></div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:8px 0 6px">
+              <div class="sidebar-title" style="margin-bottom:0">Live Transcript</div>
+              <button class="btn btn-outline btn-sm" style="font-size:0.65rem;padding:3px 8px" onclick="clearTranscript()">Clear</button>
+            </div>
+            <div class="transcript-box" id="transcriptBox2"><span class="transcript-placeholder">Start camera mic to transcribe speech...</span></div>
+            <div style="margin-top:10px"><button class="verbal-analyze-btn" style="width:100%" onclick="analyzeTranscript2()">Analyze →</button></div>
+          </div>
+          <div id="typeInputPanel" style="display:none">
+            <div class="sidebar-title" style="margin-bottom:6px">Enter spoken text</div>
+            <textarea id="typedText" style="width:100%;min-height:120px;resize:vertical;line-height:1.7" placeholder="Type or paste spoken dialogue here..."></textarea>
+            <div style="display:flex;gap:8px;margin-top:10px"><button class="verbal-analyze-btn" style="flex:1" onclick="analyzeTyped()">Analyze Text →</button></div>
+            <div style="margin-top:1rem">
+              <div class="sidebar-title" style="margin-bottom:6px">Quick examples</div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <div style="font-size:0.78rem;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--muted2)" onclick="setTyped(this.dataset.t)" data-t="nobody wants you here, you should just leave. You are so ugly and pathetic.">Exclusion + insults</div>
+                <div style="font-size:0.78rem;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--muted2)" onclick="setTyped(this.dataset.t)" data-t="If you tell anyone I will send those photos to the whole school. You better stay quiet.">Blackmail threat</div>
+                <div style="font-size:0.78rem;padding:6px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--muted2)" onclick="setTyped(this.dataset.t)" data-t="Hey can you help me with math homework? I am stuck on problem 3.">Friendly conversation</div>
+              </div>
+            </div>
+          </div>
+          <div id="demoInputPanel" style="display:none">
+            <div style="color:var(--muted2);font-size:0.85rem;line-height:1.7;margin-bottom:1rem">Simulates a random audio stream with safe and abusive speech analyzed every few seconds.</div>
+            <button class="verbal-analyze-btn" id="demoLoopBtn" onclick="toggleDemoLoop()" style="width:100%">▶ Start Demo Stream</button>
+            <div id="demoStatus" style="font-family:'IBM Plex Mono',monospace;font-size:0.7rem;color:var(--muted2);margin-top:10px;line-height:1.8;max-height:120px;overflow-y:auto"></div>
+          </div>
+        </div>
+        <div class="verbal-right">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
+            <div class="sidebar-title" style="margin-bottom:0">Analysis Results</div>
+            <span class="badge badge-red" id="verbalAlertBadge" style="display:none">0</span>
+          </div>
+          <div class="verbal-result" id="verbalResult">
+            <div class="vr-empty"><div style="font-size:2rem;opacity:0.3">🎤</div><p>Record or type speech<br/>to analyze for verbal abuse.</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ALERTS PANEL -->
+  <div class="alerts-panel">
+    <div class="panel-header">
+      <span class="panel-title">Alert Log</span>
+      <span class="badge badge-red" id="alertBadge" style="display:none">0</span>
+    </div>
+    <div class="alerts-list" id="alertsList">
+      <div class="alerts-empty">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none"><path d="M16 4L28 26H4L16 4Z" stroke="#5a6270" stroke-width="1.5" stroke-linejoin="round"/><line x1="16" y1="13" x2="16" y2="19" stroke="#5a6270" stroke-width="1.5" stroke-linecap="round"/><circle cx="16" cy="22" r="1" fill="#5a6270"/></svg>
+        <p>No alerts yet.<br/>Start monitoring to begin.</p>
+      </div>
+    </div>
+    <div style="border-top:1px solid var(--border);padding:0.75rem">
+      <div class="sidebar-title" style="margin-bottom:0.5rem">System Log</div>
+      <div id="notifLog" style="font-family:'IBM Plex Mono',monospace;font-size:0.65rem;color:var(--muted2);max-height:120px;overflow-y:auto;line-height:1.8"><div>System initialized.</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const state={cameras:[],alerts:[],selectedCam:null,monitoring:false,monitorInterval:null,alwaysAnalyze:false,alwaysAnalyzeInterval:null,alertCount:0,recognition:null,micActive:false,waveInterval:null,audioCtx:null,analyser:null,audioStream:null,camMicActive:false,camMicRecognition:null,camWaveInterval:null,camAudioCtx:null,camAnalyser:null,camAudioStream:null,hlsInstance:null,snapshotInterval:null,demoAnimFrame:null,phoneStream:null,tmModel:null,tmModelType:'image',tmPredicting:false,adminSettings:{name:'Admin',email:'',webhook:'',pushoverKey:'',pushoverToken:'',sensitivity:'danger'}};
+
+function updateClock(){document.getElementById('clockEl').textContent=new Date().toTimeString().slice(0,8)}
+setInterval(updateClock,1000);updateClock();
+
+const guides={phone:`<b>Phone/Webcam:</b> Uses your device camera directly via browser.<br/><span>No URL needed</span> — works on phones, tablets, laptops, any device with a camera.<br/>On iOS/Android: tap Allow when prompted for camera access.<br/>Compatible with <b>HTTPS/SSL deployments</b> automatically.`,mjpeg:`<b>MJPEG format:</b><br/><span>http://camera-ip/video</span><br/><span>http://camera-ip:8080/stream</span><br/>go2rtc: <span>http://pi-ip:1984/stream?src=cam</span><br/>Most Hikvision/Reolink cameras support MJPEG natively.`,hls:`<b>HLS format (go2rtc / Frigate NVR):</b><br/><span>http://pi-ip:1984/stream.m3u8?src=cam_name</span><br/><span>http://frigate-ip:5000/vod/cam_name/index.m3u8</span><br/>Works with Cloudflare Tunnel HTTPS URLs too.`,webrtc:`<b>WebRTC (go2rtc base URL):</b><br/><span>http://pi-ip:1984</span><br/>SafeWatch connects via go2rtc WebRTC API automatically.<br/>Lowest latency option — recommended for live monitoring.`,snapshot:`<b>Snapshot polling (JPEG):</b><br/><span>http://camera-ip/snapshot.jpg</span><br/>Refreshes every 2 seconds. Use if MJPEG/HLS unavailable.<br/>Works with most IP cameras and NVR systems.`,demo:`<b>Demo mode:</b> Simulated animated camera feed.<br/>Use this to test the system without real hardware.<br/>AI analysis uses scenario descriptions instead of real frames.`};
+
+function updateStreamGuide(){
+  const p=document.getElementById('camProtocol').value;
+  document.getElementById('streamGuide').innerHTML=guides[p]||'';
+  const isPhone=p==='phone',isDemo=p==='demo';
+  document.getElementById('urlRow').style.display=isPhone||isDemo?'none':'flex';
+  document.getElementById('phoneRow').style.display=isPhone?'flex':'none';
+  if(isPhone)enumerateDevices();
+}
+
+async function enumerateDevices(){
+  try{
+    await navigator.mediaDevices.getUserMedia({video:true});
+    const devices=await navigator.mediaDevices.enumerateDevices();
+    const sel=document.getElementById('deviceSelect');
+    sel.innerHTML='<option value="">Default camera</option>';
+    devices.filter(d=>d.kind==='videoinput').forEach(d=>{const o=document.createElement('option');o.value=d.deviceId;o.textContent=d.label||'Camera '+(sel.options.length);sel.appendChild(o)});
+  }catch(e){document.getElementById('deviceSelect').innerHTML='<option>Permission denied — allow camera first</option>'}
+}
+
+function addCamera(){
+  const name=document.getElementById('camName').value.trim();
+  const url=document.getElementById('camUrl').value.trim();
+  const loc=document.getElementById('camLocation').value.trim();
+  const proto=document.getElementById('camProtocol').value;
+  const deviceId=document.getElementById('deviceSelect').value;
+  if(!name){showToast('Enter a camera name','warning');return}
+  if(!url&&!['demo','phone'].includes(proto)){showToast('Enter a stream URL','warning');return}
+  const cam={id:'cam_'+Date.now(),name,url:url||proto,location:loc||'Unknown',protocol:proto,status:'connecting',isDemo:proto==='demo',deviceId,addedAt:new Date().toLocaleTimeString()};
+  state.cameras.push(cam);renderCameraList();selectCamera(cam.id);
+  showToast(name+' connecting...','success');logNotif('Camera "'+name+'" added — '+proto);
+  ['camName','camUrl','camLocation'].forEach(id=>document.getElementById(id).value='');
+}
+
+function renderCameraList(){
+  const list=document.getElementById('cameraList');
+  document.getElementById('camCount').textContent=state.cameras.length;
+  if(!state.cameras.length){list.innerHTML='<div style="color:var(--muted);font-size:0.8rem;font-family:\'IBM Plex Mono\',monospace">No cameras connected.<br/>Add one below.</div>';return}
+  list.innerHTML=state.cameras.map(cam=>{
+    const hasAlert=state.alerts.some(a=>a.camId===cam.id&&a.severity==='danger')&&state.monitoring;
+    const sc=hasAlert?'alert':cam.status;
+    const label=cam.isDemo?'DEMO':cam.protocol==='phone'?'📱':cam.protocol.toUpperCase().slice(0,4);
+    return'<div class="cam-item '+(state.selectedCam===cam.id?'active':'')+'" onclick="selectCamera(\''+cam.id+'\')">'+'<div class="cam-thumb">'+label+'</div>'+'<div class="cam-info"><div class="cam-name">'+cam.name+'</div><div class="cam-meta">'+cam.location+' · '+cam.protocol+'</div></div>'+'<div class="cam-status '+sc+'"></div></div>';
+  }).join('');
+}
+
+function selectCamera(id){
+  stopAllStreams();state.selectedCam=id;
+  const cam=state.cameras.find(c=>c.id===id);if(!cam)return;
+  renderCameraList();
+  document.getElementById('feedTitle').textContent=cam.name;
+  document.getElementById('feedSub').textContent=cam.location+' · '+cam.protocol.toUpperCase()+' · '+cam.url;
+  document.getElementById('feedOffline').style.display='none';
+  document.getElementById('snapBtn').style.display='block';
+  document.getElementById('analyzeNowBtn').style.display='block';
+  document.getElementById('reconnectBtn').style.display='block';
+  document.getElementById('fsBtn').style.display='block';
+  document.getElementById('scanOverlay').classList.add('active');
+  document.getElementById('streamBadge').style.display='block';
+  hideOverlays();
+  if(cam.isDemo)startDemo(cam);
+  else if(cam.protocol==='phone')startPhone(cam);
+  else if(cam.protocol==='mjpeg')startMJPEG(cam);
+  else if(cam.protocol==='hls')startHLS(cam);
+  else if(cam.protocol==='webrtc')startWebRTC(cam);
+  else if(cam.protocol==='snapshot')startSnapshot(cam);
+}
+
+function reconnectCam(){const cam=state.cameras.find(c=>c.id===state.selectedCam);if(cam)selectCamera(cam.id)}
+
+async function startPhone(cam){
+  setBadge('● LIVE','live');document.getElementById('feedType').textContent='DEVICE CAM';showConnecting('Requesting camera permission...');
+  try{
+    const constraints={video:cam.deviceId?{deviceId:{exact:cam.deviceId}}:true,audio:true};
+    const stream=await navigator.mediaDevices.getUserMedia(constraints);
+    state.phoneStream=stream;
+    const video=document.getElementById('phoneVideo');
+    video.srcObject=stream;video.style.display='block';
+    video.onloadedmetadata=()=>{hideOverlays();setCamStatus(cam.id,'online');document.getElementById('feedStatus').textContent='Live — Device Camera';logNotif(cam.name+': device camera connected')};
+  }catch(e){
+    showErr('Camera permission denied',e.message,['Allow camera access when prompted','On iPhone: Settings → Safari → Camera → Allow','On Android: tap camera icon in the address bar','Try a different browser if blocked','Must be on HTTPS for camera access on mobile']);
+    setCamStatus(cam.id,'offline');
+  }
+}
+
+function startMJPEG(cam){
+  setBadge('● LIVE','live');document.getElementById('feedType').textContent='MJPEG';showConnecting(cam.url);
+  const img=document.getElementById('imgStream');img.style.display='block';
+  img.onload=()=>{hideOverlays();setCamStatus(cam.id,'online');document.getElementById('feedStatus').textContent='Live — MJPEG';logNotif(cam.name+': MJPEG connected')};
+  img.onerror=()=>showErr('MJPEG stream failed','Could not load the stream.',['Check the camera is powered and reachable on network','Try opening the URL directly in your browser','Hikvision MJPEG: http://camera-ip/ISAPI/Streaming/channels/101/httppreview','go2rtc MJPEG: http://pi-ip:1984/stream?src=cam_name','CORS may block cross-origin streams — use a reverse proxy']);
+  img.src=cam.url+'?t='+Date.now();
+}
+
+function startHLS(cam){
+  setBadge('● LIVE','live');document.getElementById('feedType').textContent='HLS';showConnecting(cam.url);
+  const video=document.getElementById('videoStream');video.style.display='block';
+  if(typeof Hls!=='undefined'&&Hls.isSupported()){
+    const hls=new Hls({debug:false,enableWorker:true,lowLatencyMode:true});
+    state.hlsInstance=hls;hls.loadSource(cam.url);hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED,()=>{video.play().catch(()=>{});hideOverlays();setCamStatus(cam.id,'online');document.getElementById('feedStatus').textContent='Live — HLS';logNotif(cam.name+': HLS connected')});
+    hls.on(Hls.Events.ERROR,(e,d)=>{if(d.fatal)showErr('HLS stream error: '+d.type,'',['Ensure go2rtc or Frigate NVR is running on the Pi','go2rtc HLS URL: http://pi-ip:1984/stream.m3u8?src=cam_name','Frigate HLS: http://frigate-ip:5000/vod/cam_name/index.m3u8','Check Cloudflare Tunnel is active if accessing remotely','Try WebRTC mode for lower latency'])});
+  }else if(video.canPlayType('application/vnd.apple.mpegurl')){
+    video.src=cam.url;video.play().catch(()=>{});
+    video.onloadedmetadata=()=>{hideOverlays();setCamStatus(cam.id,'online');document.getElementById('feedStatus').textContent='Live — HLS (Safari)'};
+    video.onerror=()=>showErr('HLS failed','Could not load HLS stream.',[]);
+  }else showErr('HLS not supported','Use Chrome, Firefox, or Edge.',[]);
+}
+
+async function startWebRTC(cam){
+  setBadge('● LIVE','live');document.getElementById('feedType').textContent='WebRTC';showConnecting(cam.url);
+  const video=document.getElementById('videoStream');video.style.display='block';
+  try{
+    const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+    state.webrtcPc=pc;
+    pc.addTransceiver('video',{direction:'recvonly'});pc.addTransceiver('audio',{direction:'recvonly'});
+    pc.ontrack=e=>{if(video.srcObject!==e.streams[0]){video.srcObject=e.streams[0];video.play().catch(()=>{});hideOverlays();setCamStatus(cam.id,'online');document.getElementById('feedStatus').textContent='Live — WebRTC';logNotif(cam.name+': WebRTC connected')}};
+    const offer=await pc.createOffer();await pc.setLocalDescription(offer);
+    const base=cam.url.replace(/\/+$/,'');
+    const slug=cam.name.toLowerCase().replace(/\s+/g,'_');
+    const resp=await fetch(base+'/api/webrtc?src='+slug,{method:'POST',body:JSON.stringify({type:offer.type,sdp:offer.sdp}),headers:{'Content-Type':'application/json'}});
+    if(!resp.ok)throw new Error('Handshake failed: '+resp.status);
+    await pc.setRemoteDescription(new RTCSessionDescription(await resp.json()));
+  }catch(e){
+    showErr('WebRTC connection failed',e.message,['Ensure go2rtc is running on the Pi at the URL entered','URL format: http://raspberry-pi-ip:1984','Camera name must match exactly what is in go2rtc.yaml','Check Cloudflare Tunnel is active if accessing remotely','Try HLS mode: http://pi-ip:1984/stream.m3u8?src=name']);
+    setCamStatus(cam.id,'offline');
+  }
+}
+
+function startSnapshot(cam){
+  setBadge('● SNAPSHOT','live');document.getElementById('feedType').textContent='SNAPSHOT';showConnecting(cam.url);
+  const img=document.getElementById('imgStream');img.style.display='block';
+  let loaded=0;
+  const doFetch=()=>{const tmp=new Image();tmp.crossOrigin='anonymous';tmp.onload=()=>{img.src=tmp.src;if(!loaded++){hideOverlays();setCamStatus(cam.id,'online');document.getElementById('feedStatus').textContent='Live — Snapshot (2s)';logNotif(cam.name+': snapshot polling')}};tmp.onerror=()=>{if(!loaded)showErr('Snapshot URL unreachable','Could not load JPEG snapshot.',['Check URL returns a JPEG: '+cam.url,'Most cameras: http://camera-ip/snapshot.jpg'])};tmp.src=cam.url+'?t='+Date.now()};
+  doFetch();state.snapshotInterval=setInterval(doFetch,2000);
+}
+
+let demoPeople=[],demoFrame=0;
+function startDemo(cam){
+  setBadge('● DEMO','demo');document.getElementById('demoBadge').style.display='block';
+  document.getElementById('feedType').textContent='SIMULATED';document.getElementById('feedStatus').textContent='Demo Mode';
+  const canvas=document.getElementById('feedCanvas');canvas.style.display='block';setCamStatus(cam.id,'online');
+  demoPeople=Array.from({length:4},(_,i)=>({x:100+i*180,y:200+Math.random()*100,vx:(Math.random()-0.5)*1.5,vy:(Math.random()-0.5)*0.8,size:28+Math.random()*12,hue:[200,120,30,280][i],aggressive:false}));
+  drawDemoLoop();
+}
+function drawDemoLoop(){
+  const canvas=document.getElementById('feedCanvas');if(!canvas||canvas.style.display==='none')return;
+  const ctx=canvas.getContext('2d');canvas.width=canvas.offsetWidth||800;canvas.height=canvas.offsetHeight||450;
+  demoFrame++;
+  demoPeople.forEach(p=>{p.x+=p.vx;p.y+=p.vy;if(p.x<30||p.x>canvas.width*0.95)p.vx*=-1;if(p.y<canvas.height*0.35||p.y>canvas.height*0.75)p.vy*=-1;p.x=Math.max(30,Math.min(canvas.width*0.95,p.x));p.y=Math.max(canvas.height*0.35,Math.min(canvas.height*0.75,p.y))});
+  ctx.fillStyle='#0a0c10';ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#14181f';ctx.beginPath();ctx.moveTo(0,canvas.height*0.55);ctx.lineTo(canvas.width,canvas.height*0.55);ctx.lineTo(canvas.width,canvas.height);ctx.lineTo(0,canvas.height);ctx.fill();
+  for(let i=0;i<12;i++)for(let j=0;j<4;j++){ctx.strokeStyle='rgba(255,255,255,0.03)';ctx.lineWidth=0.5;ctx.strokeRect(i*(canvas.width/11),j*(canvas.height*0.55/4),canvas.width/11,canvas.height*0.55/4)}
+  demoPeople.forEach(p=>{
+    const px=p.x/800*canvas.width,py=p.y/450*canvas.height,s=p.size/800*canvas.width*8;
+    ctx.fillStyle='rgba(0,0,0,0.3)';ctx.beginPath();ctx.ellipse(px,py+s*0.9,s*0.3,s*0.1,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=p.aggressive?'#ff4444':'hsl('+p.hue+',60%,55%)';ctx.fillRect(px-s*0.15,py-s*0.4,s*0.3,s*0.7);
+    ctx.fillStyle=p.aggressive?'#ff6666':'hsl('+p.hue+',50%,70%)';ctx.beginPath();ctx.arc(px,py-s*0.5,s*0.18,0,Math.PI*2);ctx.fill();
+    if(p.aggressive){ctx.strokeStyle='#ff0000';ctx.lineWidth=1.5;ctx.strokeRect(px-s*0.35,py-s*0.75,s*0.7,s*1)}
+  });
+  ctx.fillStyle='rgba(255,255,255,0.35)';ctx.font=Math.max(9,canvas.width*0.013)+'px "IBM Plex Mono",monospace';
+  ctx.fillText(new Date().toLocaleString(),10,canvas.height-10);ctx.fillText('CAM DEMO',canvas.width-80,canvas.height-10);
+  const scanY=(demoFrame*2)%canvas.height;const grad=ctx.createLinearGradient(0,scanY-20,0,scanY+20);
+  grad.addColorStop(0,'transparent');grad.addColorStop(0.5,'rgba(0,230,118,0.03)');grad.addColorStop(1,'transparent');
+  ctx.fillStyle=grad;ctx.fillRect(0,scanY-20,canvas.width,40);
+  state.demoAnimFrame=requestAnimationFrame(drawDemoLoop);
+}
+
+function stopAllStreams(){
+  if(state.hlsInstance){state.hlsInstance.destroy();state.hlsInstance=null}
+  if(state.snapshotInterval){clearInterval(state.snapshotInterval);state.snapshotInterval=null}
+  if(state.demoAnimFrame){cancelAnimationFrame(state.demoAnimFrame);state.demoAnimFrame=null}
+  if(state.phoneStream){state.phoneStream.getTracks().forEach(t=>t.stop());state.phoneStream=null}
+  if(state.webrtcPc){state.webrtcPc.close();state.webrtcPc=null}
+  const v1=document.getElementById('phoneVideo');v1.pause();v1.srcObject=null;v1.style.display='none';
+  const v2=document.getElementById('videoStream');v2.pause();v2.srcObject=null;v2.src='';v2.style.display='none';
+  const img=document.getElementById('imgStream');img.src='';img.style.display='none';
+  document.getElementById('feedCanvas').style.display='none';
+  document.getElementById('demoBadge').style.display='none';
+  document.getElementById('tmOverlay').classList.remove('show');
+  stopTMPredictions();hideOverlays();
+}
+
+function captureFrame(){
+  const cap=document.getElementById('captureCanvas');const ctx=cap.getContext('2d');
+  const v1=document.getElementById('phoneVideo');const v2=document.getElementById('videoStream');
+  const img=document.getElementById('imgStream');const canvas=document.getElementById('feedCanvas');
+  let src=null,w=320,h=240;
+  if(v1.style.display!=='none'&&v1.videoWidth>0){src=v1;w=v1.videoWidth;h=v1.videoHeight}
+  else if(v2.style.display!=='none'&&v2.videoWidth>0){src=v2;w=v2.videoWidth;h=v2.videoHeight}
+  else if(img.style.display!=='none'&&img.naturalWidth>0){src=img;w=img.naturalWidth;h=img.naturalHeight}
+  else if(canvas.style.display!=='none'){src=canvas;w=canvas.width;h=canvas.height}
+  if(!src)return null;
+  cap.width=w;cap.height=h;ctx.drawImage(src,0,0,w,h);
+  return cap.toDataURL('image/jpeg',0.7).split(',')[1];
+}
+
+let tmPredictInterval=null;
+async function loadTMModel(){
+  const urlInput=document.getElementById('tmUrl').value.trim();
+  const modelType=document.getElementById('tmModelType').value;
+  const statusEl=document.getElementById('tmStatus');
+  statusEl.textContent='Loading model...';statusEl.className='tm-status';
+  try{
+    let model;
+    if(urlInput){
+      const base=urlInput.endsWith('/')?urlInput:urlInput+'/';
+      model=modelType==='pose'?await tmPose.load(base+'model.json',base+'metadata.json'):await tmImage.load(base+'model.json',base+'metadata.json');
+    }else{
+      const jsonFile=document.getElementById('tmModelJson').files[0];
+      const metaFile=document.getElementById('tmMetadata').files[0];
+      if(!jsonFile||!metaFile){showToast('Upload model.json and metadata.json','warning');statusEl.textContent='Upload files or enter URL';return}
+      const jUrl=URL.createObjectURL(jsonFile);const mUrl=URL.createObjectURL(metaFile);
+      model=modelType==='pose'?await tmPose.load(jUrl,mUrl):await tmImage.load(jUrl,mUrl);
+    }
+    state.tmModel=model;state.tmModelType=modelType;
+    const classes=model.getTotalClasses?model.getTotalClasses():'?';
+    statusEl.textContent='✓ Model loaded — '+classes+' classes ('+modelType+')';statusEl.className='tm-status loaded';
+    logNotif('Teachable Machine model loaded — '+modelType+', '+classes+' classes');
+    showToast('Teachable Machine model ready','success');startTMPredictions();
+  }catch(e){statusEl.textContent='✕ Failed: '+e.message;statusEl.className='tm-status error';logNotif('TM error: '+e.message);showToast('Model load failed','danger')}
+}
+
+function startTMPredictions(){stopTMPredictions();if(!state.tmModel)return;document.getElementById('tmOverlay').classList.add('show');tmPredictInterval=setInterval(runTMPrediction,500)}
+function stopTMPredictions(){if(tmPredictInterval){clearInterval(tmPredictInterval);tmPredictInterval=null}document.getElementById('tmOverlay').classList.remove('show')}
+
+async function runTMPrediction(){
+  if(!state.tmModel||state.tmPredicting)return;
+  const v1=document.getElementById('phoneVideo');const v2=document.getElementById('videoStream');const cv=document.getElementById('feedCanvas');
+  let src=null;
+  if(v1.style.display!=='none'&&v1.videoWidth>0)src=v1;
+  else if(v2.style.display!=='none'&&v2.videoWidth>0)src=v2;
+  else if(cv.style.display!=='none')src=cv;
+  if(!src)return;
+  state.tmPredicting=true;
+  try{
+    let preds;
+    if(state.tmModelType==='pose'){const{posenetOutput}=await state.tmModel.estimatePose(src);preds=await state.tmModel.predict(posenetOutput)}
+    else preds=await state.tmModel.predict(src);
+    renderTMPredictions(preds);
+    const top=preds.reduce((a,b)=>a.probability>b.probability?a:b);
+    if(top.probability>0.75){
+      const cls=top.className.toLowerCase();
+      if(cls.includes('fight')||cls.includes('bully')||cls.includes('aggress')||cls.includes('attack')||cls.includes('hit')||cls.includes('push')){
+        const cam=state.cameras.find(c=>c.id===state.selectedCam);
+        if(cam&&state.monitoring)handleDetectionResult({verdict:'danger',severity:Math.round(top.probability*100),categories:['TM: '+top.className],description:'Teachable Machine detected: '+top.className+' ('+Math.round(top.probability*100)+'%)',recommend_action:'Review camera footage immediately',confidence:Math.round(top.probability*100)},cam,true);
+      }
+    }
+  }catch(e){}
+  state.tmPredicting=false;
+}
+
+function renderTMPredictions(preds){
+  const sorted=preds.sort((a,b)=>b.probability-a.probability);
+  document.getElementById('tmOverlay').innerHTML=sorted.map((p,i)=>'<div class="tm-pred-row '+(i===0?'top':'')+'"><span>'+p.className.slice(0,18)+'</span><div><span>'+Math.round(p.probability*100)+'%</span><div class="tm-bar-wrap"><div class="tm-bar" style="width:'+p.probability*100+'%;background:'+(i===0?'var(--green)':'var(--border2)')+'"></div></div></div></div>').join('');
+}
+
+function showConnecting(url){document.getElementById('connOverlay').classList.add('show');document.getElementById('connUrl').textContent=url;document.getElementById('errOverlay').classList.remove('show')}
+function hideOverlays(){document.getElementById('connOverlay').classList.remove('show');document.getElementById('errOverlay').classList.remove('show')}
+function showErr(title,body,steps){
+  document.getElementById('connOverlay').classList.remove('show');document.getElementById('errOverlay').classList.add('show');
+  document.getElementById('errTitle').textContent=title;document.getElementById('errBody').textContent=body;
+  const se=document.getElementById('errSteps');
+  if(steps&&steps.length){se.style.display='block';se.innerHTML=steps.map(s=>'<div>→ <span>'+s+'</span></div>').join('')}else se.style.display='none';
+  document.getElementById('feedStatus').textContent='Error';setBadge('● ERROR','error');logNotif('ERROR: '+title);
+}
+function setBadge(text,cls){const b=document.getElementById('streamBadge');b.textContent=text;b.className='stream-badge '+cls}
+function setCamStatus(id,status){const c=state.cameras.find(x=>x.id===id);if(c){c.status=status;renderCameraList()}}
+
+function toggleFullscreen(){const el=document.getElementById('cameraFeed');if(!document.fullscreenElement)el.requestFullscreen().catch(()=>showToast('Fullscreen not available','warning'));else document.exitFullscreen()}
+
+function takeSnapshot(){const frame=captureFrame();if(!frame){showToast('No frame to capture','warning');return}const l=document.createElement('a');l.download='safewatch-'+Date.now()+'.jpg';l.href='data:image/jpeg;base64,'+frame;l.click();showToast('Snapshot saved','success');logNotif('Snapshot captured')}
+
+function toggleMonitoring(){
+  state.monitoring=!state.monitoring;const btn=document.getElementById('monitorBtn');
+  if(state.monitoring){btn.textContent='⏹ Stop Monitoring';btn.className='btn btn-danger btn-sm';document.getElementById('monStatus').innerHTML='Monitoring: <strong style="color:var(--green)">LIVE</strong>';logNotif('Monitoring started');showToast('Monitoring started','success');state.monitorInterval=setInterval(()=>analyzeNow(true),8000)}
+  else{btn.textContent='▶ Start Monitoring';btn.className='btn btn-green btn-sm';document.getElementById('monStatus').innerHTML='Monitoring: <strong>OFF</strong>';clearInterval(state.monitorInterval);logNotif('Monitoring stopped');showToast('Monitoring stopped','warning')}
+}
+
+async function analyzeNow(auto=false){
+  const cam=state.cameras.find(c=>c.id===state.selectedCam);if(!cam){showToast('Select a camera first','warning');return}
+  document.getElementById('lastScan').textContent=new Date().toLocaleTimeString();
+  document.getElementById('feedStatus').textContent='Analyzing...';
+  const frame=captureFrame();
+  let messages;
+  if(frame){messages=[{role:'user',content:[{type:'image',source:{type:'base64',media_type:'image/jpeg',data:frame}},{type:'text',text:'You are an AI safety monitor for a school anti-bullying system. Analyze this camera frame from '+cam.name+' at '+cam.location+' for bullying, physical aggression, or harassment. Respond ONLY with valid JSON: {"verdict":"safe"|"warning"|"danger","severity":<0-100>,"categories":["list or [\'none\']"],"description":"1-2 sentences","recommend_action":"brief action","confidence":<50-99>}'}]}]}
+  else{const scene=getDemoScenario();messages=[{role:'user',content:'You are an AI safety monitor. Scene: "'+scene+'" Camera: '+cam.name+', '+cam.location+'. Respond ONLY with valid JSON: {"verdict":"safe"|"warning"|"danger","severity":<0-100>,"categories":["list or [\'none\']"],"description":"1-2 sentences","recommend_action":"brief action","confidence":<50-99>}'}]}
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:500,messages})});
+    const data=await res.json();const raw=data.content.map(b=>b.text||'').join('');
+    const result=JSON.parse(raw.replace(/```json|```/g,'').trim());
+    document.getElementById('feedStatus').textContent='Online';handleDetectionResult(result,cam,auto);
+  }catch(e){document.getElementById('feedStatus').textContent='Analysis error';logNotif('Analysis failed: '+e.message)}
+}
+
+function getDemoScenario(){const s=['Two students laughing in the hallway.','Three students surrounding one against a locker with tense body language.','One student pushing another repeatedly.','Students walking normally between classes.','Student taking another bag and throwing items while others laugh.','Two students in friendly conversation.','Group excluding one student who looks distressed.','Students sitting at lunch table normally.'];return s[Math.floor(Math.random()*s.length)]}
+
+function handleDetectionResult(result,cam,auto){
+  const sens=state.adminSettings.sensitivity;const shouldAlert=result.verdict==='danger'||(sens==='high'&&result.verdict==='warning');
+  if(shouldAlert){
+    document.getElementById('alertBannerText').textContent='⚠ '+result.verdict.toUpperCase()+': '+result.description;
+    document.getElementById('alertBanner').classList.add('show');setTimeout(()=>document.getElementById('alertBanner').classList.remove('show'),8000);
+    if(cam.isDemo)showDetectBoxes();sendNotification(result,cam);
+    showToast('🚨 '+(result.verdict==='danger'?'BULLYING DETECTED':'Concern flagged')+' — '+cam.name,'danger');
+  }
+  addAlert(result,cam);renderCameraList();
+}
+
+function showDetectBoxes(){
+  const c=document.getElementById('detectBoxes');const cv=document.getElementById('feedCanvas');if(!cv)return;
+  const w=cv.offsetWidth,h=cv.offsetHeight;c.innerHTML='';
+  [{x:w*0.25,y:h*0.3,w:w*0.18,h:h*0.45,label:'AGGRESSOR'},{x:w*0.42,y:h*0.35,w:w*0.15,h:h*0.4,label:'VICTIM'}].forEach(b=>{
+    const d=document.createElement('div');d.className='detect-box';d.style.cssText='left:'+b.x+'px;top:'+b.y+'px;width:'+b.w+'px;height:'+b.h+'px';
+    d.innerHTML='<div class="detect-box-label">'+b.label+'</div>';c.appendChild(d);
+  });
+  if(demoPeople.length){demoPeople[0].aggressive=true;setTimeout(()=>{demoPeople[0].aggressive=false;c.innerHTML=''},5000)}
+}
+
+function addAlert(result,cam){
+  const a={id:'a'+Date.now(),camId:cam.id,camName:cam.name,location:cam.location,severity:result.verdict,severity_score:result.severity,categories:result.categories,description:result.description,recommend:result.recommend_action,confidence:result.confidence,time:new Date().toLocaleTimeString(),date:new Date().toLocaleDateString(),notified:!!(state.adminSettings.email||state.adminSettings.pushoverKey)};
+  state.alerts.unshift(a);state.alertCount++;document.getElementById('alertCount').textContent=state.alertCount;renderAlerts();
+}
+
+function renderAlerts(){
+  const list=document.getElementById('alertsList');const badge=document.getElementById('alertBadge');
+  const d=state.alerts.filter(a=>a.severity==='danger').length;
+  if(d>0){badge.style.display='block';badge.textContent=d}
+  if(!state.alerts.length){list.innerHTML='<div class="alerts-empty"><svg width="32" height="32" viewBox="0 0 32 32" fill="none"><path d="M16 4L28 26H4L16 4Z" stroke="#5a6270" stroke-width="1.5" stroke-linejoin="round"/><line x1="16" y1="13" x2="16" y2="19" stroke="#5a6270" stroke-width="1.5" stroke-linecap="round"/><circle cx="16" cy="22" r="1" fill="#5a6270"/></svg><p>No alerts yet.</p></div>';return}
+  list.innerHTML=state.alerts.map(a=>'<div class="alert-item"><div class="alert-header"><span class="alert-severity '+a.severity+'">'+a.severity.toUpperCase()+' · '+a.severity_score+'%</span><span class="alert-time">'+a.time+'</span></div><div class="alert-cam">📍 '+a.camName+' — '+a.location+'</div><div class="alert-desc">'+a.description+'</div><div class="alert-cats">'+((a.categories||[]).filter(c=>c!=='none').map(c=>'<span class="alert-cat">'+c+'</span>').join(''))+'</div>'+(a.recommend?'<div style="font-size:0.75rem;color:var(--amber);margin-bottom:6px">→ '+a.recommend+'</div>':'')+(a.notified?'<div class="alert-notified">✓ Admin notified</div>':'')+'</div>').join('');
+}
+
+async function sendNotification(result,cam){
+  const a=state.adminSettings;const ts=new Date().toLocaleString();
+  if(a.email)logNotif('EMAIL → '+a.email+': ['+result.verdict.toUpperCase()+'] '+cam.name+' @ '+ts);
+  if(a.webhook){fetch(a.webhook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'🚨 *SafeWatch Alert*\n*Severity:* '+result.verdict.toUpperCase()+' ('+result.severity+'%)\n*Camera:* '+cam.name+' — '+cam.location+'\n*Detected:* '+result.description+'\n*Action:* '+result.recommend_action+'\n*Time:* '+ts})}).then(()=>logNotif('Slack webhook sent ✓')).catch(e=>logNotif('Webhook failed: '+e.message))}
+  if(a.pushoverKey&&a.pushoverToken){
+    try{await fetch('https://api.pushover.net/1/messages.json',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:a.pushoverToken,user:a.pushoverKey,title:'SafeWatch — '+result.verdict.toUpperCase()+' Alert',message:result.description+'\n\nCamera: '+cam.name+'\nLocation: '+cam.location+'\nSeverity: '+result.severity+'%\nAction: '+result.recommend_action,priority:result.verdict==='danger'?1:0,sound:'siren'})});logNotif('Pushover notification sent ✓')}catch(e){logNotif('Pushover failed: '+e.message)}
+  }
+  if(Notification.permission==='granted')new Notification('SafeWatch Alert',{body:result.verdict.toUpperCase()+': '+result.description+' — '+cam.name});
+  else if(Notification.permission!=='denied')Notification.requestPermission();
+  logNotif('Alert dispatched: '+result.verdict+' — '+cam.name);
+}
+
+function saveAdminSettings(){
+  const a=state.adminSettings;a.name=document.getElementById('adminName').value||'Admin';a.email=document.getElementById('adminEmail').value;a.webhook=document.getElementById('webhookUrl').value;a.pushoverKey=document.getElementById('pushoverKey').value;a.pushoverToken=document.getElementById('pushoverToken').value;a.sensitivity=document.getElementById('sensitivity').value;
+  showToast('Settings saved','success');logNotif('Admin settings saved');
+  if(Notification.permission!=='granted')Notification.requestPermission();
+}
+
+function dismissBanner(){document.getElementById('alertBanner').classList.remove('show');document.getElementById('detectBoxes').innerHTML=''}
+function exportLog(){if(!state.alerts.length){showToast('No alerts','warning');return}const csv=['Time,Date,Camera,Location,Severity,Score,Categories,Description'].concat(state.alerts.map(a=>a.time+','+a.date+',"'+a.camName+'","'+a.location+'",'+a.severity+','+a.severity_score+',\"'+((a.categories||[]).join('|'))+'","'+a.description+'"')).join('\n');const l=document.createElement('a');l.download='safewatch-'+Date.now()+'.csv';l.href='data:text/csv,'+encodeURIComponent(csv);l.click();showToast('Exported','success')}
+function clearAlerts(){state.alerts=[];state.alertCount=0;document.getElementById('alertCount').textContent=0;document.getElementById('alertBadge').style.display='none';renderAlerts();showToast('Cleared','warning')}
+
+function switchTab(tab){
+  document.getElementById('tabCamera').classList.toggle('active',tab==='camera');document.getElementById('tabVerbal').classList.toggle('active',tab==='verbal');
+  document.getElementById('cameraView').style.display=tab==='camera'?'flex':'none';document.getElementById('verbalView').style.display=tab==='verbal'?'flex':'none';
+  if(tab==='verbal'){document.getElementById('feedTitle').textContent='Verbal Abuse Detection';document.getElementById('feedSub').textContent='Real-time speech analysis — device or camera microphone';['snapBtn','analyzeNowBtn','reconnectBtn'].forEach(id=>document.getElementById(id).style.display='none')}
+  else{const cam=state.cameras.find(c=>c.id===state.selectedCam);document.getElementById('feedTitle').textContent=cam?cam.name:'No Camera Selected';document.getElementById('feedSub').textContent=cam?cam.location+' · '+cam.protocol.toUpperCase()+' · '+cam.url:'Select a camera from the sidebar';if(cam)['snapBtn','analyzeNowBtn','reconnectBtn'].forEach(id=>document.getElementById(id).style.display='block')}
+}
+
+let transcript='',interimText='',transcript2='',verbalSource='mic',verbalAlertCount=0,demoLoopInterval=null,demoLoopActive=false,lastAutoAnalyze=0;
+
+function setSource(src){
+  verbalSource=src;
+  ['mic','cam','type','demo'].forEach(s=>{document.getElementById('src'+s.charAt(0).toUpperCase()+s.slice(1)).classList.toggle('active',s===src);document.getElementById(s+'InputPanel').style.display=s===src?'block':'none'});
+  if(src!=='mic'&&state.micActive)stopMic();if(src!=='cam'&&state.camMicActive)stopCamMic();if(src!=='demo')stopDemoLoop();
+}
+
+function initWaveform(){
+  ['waveform','camWaveform'].forEach(id=>{const wf=document.getElementById(id);if(!wf)return;wf.innerHTML='';for(let i=0;i<24;i++){const b=document.createElement('div');b.className='wave-bar';b.style.height='4px';wf.appendChild(b)}});
+}
+function animateWave(id,active){const bars=document.querySelectorAll('#'+id+' .wave-bar');if(!active){bars.forEach(b=>{b.style.height='4px';b.classList.remove('active')});return}bars.forEach(b=>{b.classList.add('active');b.style.height=(4+Math.random()*36)+'px'})}
+
+function toggleMic(){if(state.micActive)stopMic();else startMic()}
+
+function startSpeechEngine(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){showToast('Speech recognition requires Chrome','warning');return null}
+  const rec=new SR();rec.continuous=true;rec.interimResults=true;rec.lang='en-US';return rec;
+}
+
+function startMic(){
+  const rec=startSpeechEngine();if(!rec)return;
+  rec.onresult=e=>{let interim='',final='';for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript;if(e.results[i].isFinal)final+=t+' ';else interim+=t}if(final){transcript+=final;renderTranscript();autoAnalyze(transcript,'Device Microphone')}interimText=interim;renderTranscript()};
+  rec.onerror=e=>logNotif('Mic error: '+e.error);rec.onend=()=>{if(state.micActive)rec.start()};rec.start();
+  state.recognition=rec;state.micActive=true;
+  document.getElementById('micBtn').classList.add('recording');document.getElementById('micLabel').textContent='RECORDING — SPEAK NOW';document.getElementById('micLabel').classList.add('active');
+  state.waveInterval=setInterval(()=>animateWave('waveform',true),120);logNotif('Device microphone started');
+}
+function stopMic(){if(state.recognition){state.recognition.stop();state.recognition=null}state.micActive=false;clearInterval(state.waveInterval);animateWave('waveform',false);document.getElementById('micBtn').classList.remove('recording');document.getElementById('micLabel').textContent='CLICK TO RECORD';document.getElementById('micLabel').classList.remove('active')}
+
+async function toggleCamMic(){
+  if(state.camMicActive){stopCamMic();return}
+  const btn=document.getElementById('camMicBtn');
+  try{
+    if(state.phoneStream&&state.phoneStream.getAudioTracks().length>0)logNotif('Using audio from active camera stream');
+    else await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    const rec=startSpeechEngine();if(!rec)return;
+    rec.onresult=e=>{let final='';for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript;if(e.results[i].isFinal)final+=t+' '}if(final){transcript2+=final;renderTranscript2();autoAnalyze(transcript2,'Camera Microphone')}};
+    rec.onerror=e=>logNotif('Cam mic error: '+e.error);rec.onend=()=>{if(state.camMicActive)rec.start()};rec.start();
+    state.camMicRecognition=rec;state.camMicActive=true;
+    btn.textContent='⏹ Stop Camera Microphone';btn.style.background='var(--red)';
+    state.camWaveInterval=setInterval(()=>animateWave('camWaveform',true),120);logNotif('Camera microphone started');
+  }catch(e){showToast('Microphone access denied: '+e.message,'danger');logNotif('Cam mic error: '+e.message)}
+}
+function stopCamMic(){if(state.camMicRecognition){state.camMicRecognition.stop();state.camMicRecognition=null}state.camMicActive=false;clearInterval(state.camWaveInterval);animateWave('camWaveform',false);document.getElementById('camMicBtn').textContent='🎤 Start Camera Microphone';document.getElementById('camMicBtn').style.background='var(--green)'}
+
+function renderTranscript(){const box=document.getElementById('transcriptBox');if(!transcript&&!interimText){box.innerHTML='<span class="transcript-placeholder">Start recording...</span>';return}box.innerHTML=(transcript?'<span class="transcript-final">'+transcript+'</span>':'')+(interimText?'<span class="transcript-interim">'+interimText+'</span>':'');box.scrollTop=box.scrollHeight}
+function renderTranscript2(){const box=document.getElementById('transcriptBox2');box.innerHTML='<span class="transcript-final">'+transcript2+'</span>';box.scrollTop=box.scrollHeight}
+function clearTranscript(){transcript='';interimText='';transcript2='';renderTranscript();const b2=document.getElementById('transcriptBox2');if(b2)b2.innerHTML='<span class="transcript-placeholder">Start camera mic to transcribe speech...</span>'}
+function analyzeTranscript(){if(!transcript.trim()){showToast('No transcript','warning');return}runVerbalAnalysis(transcript,'Device Microphone')}
+function analyzeTranscript2(){if(!transcript2.trim()){showToast('No transcript','warning');return}runVerbalAnalysis(transcript2,'Camera Microphone')}
+function analyzeTyped(){const t=document.getElementById('typedText').value.trim();if(!t){showToast('Enter text first','warning');return}runVerbalAnalysis(t,'Manual Input')}
+function setTyped(t){document.getElementById('typedText').value=t}
+function autoAnalyze(text,source){const now=Date.now();if(now-lastAutoAnalyze<5000)return;lastAutoAnalyze=now;runVerbalAnalysis(text,source)}
+
+const DEMO_SPEECHES=['Hey have you finished the science project?','Nobody likes you. Go back to wherever you came from loser.','Can I borrow your pencil?','Give me your lunch money or I will make your life miserable.','Great job on the presentation today!','You are so ugly no wonder nobody wants to sit with you.','Did you see the game last night?','We do not want you in our group. Find your own friends freak.','I will hurt you if you tell the teacher.','Thanks for helping me with homework yesterday.'];
+function injectDemoSpeech(){const s=DEMO_SPEECHES[Math.floor(Math.random()*DEMO_SPEECHES.length)];transcript+=s+' ';renderTranscript();runVerbalAnalysis(s,'Demo')}
+function toggleDemoLoop(){if(demoLoopActive){stopDemoLoop();return}demoLoopActive=true;document.getElementById('demoLoopBtn').textContent='⏹ Stop Demo Stream';document.getElementById('demoLoopBtn').style.background='var(--red)';runDemoLoop();demoLoopInterval=setInterval(runDemoLoop,6000);logNotif('Demo verbal stream started')}
+function stopDemoLoop(){demoLoopActive=false;clearInterval(demoLoopInterval);document.getElementById('demoLoopBtn').textContent='▶ Start Demo Stream';document.getElementById('demoLoopBtn').style.background='var(--green)'}
+function runDemoLoop(){const s=DEMO_SPEECHES[Math.floor(Math.random()*DEMO_SPEECHES.length)];const el=document.getElementById('demoStatus');el.innerHTML+='<div>['+new Date().toLocaleTimeString()+'] "'+s.slice(0,50)+'..."</div>';el.scrollTop=el.scrollHeight;runVerbalAnalysis(s,'Demo Stream')}
+
+async function runVerbalAnalysis(text,source){
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:600,messages:[{role:'user',content:'You are an AI monitoring system for a school anti-bullying program. Analyze this spoken text for verbal abuse, harassment, or bullying.\nSpoken text: """'+text+'"""\nSource: '+source+'\nRespond ONLY with valid JSON (no markdown):\n{"verdict":"safe"|"warning"|"danger","severity":<0-100>,"categories":["list or [\'none\']"],"flagged_phrases":["harmful phrases or empty"],"summary":"1-2 sentences","recommend_action":"brief action"}'}]})});
+    const data=await res.json();const result=JSON.parse(data.content.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim());
+    renderVerbalResult(result,text,source);
+    const sens=state.adminSettings.sensitivity;
+    if(result.verdict==='danger'||(sens==='high'&&result.verdict==='warning')){
+      const fakeCam={id:'verbal_'+Date.now(),name:'Verbal Monitor',location:source};
+      addAlert({...result,description:result.summary,recommend_action:result.recommend_action},fakeCam);sendNotification({...result,description:result.summary},fakeCam);
+      showToast('🚨 Verbal abuse: '+(result.categories.filter(c=>c!=='none').join(', ')),'danger');
+      document.getElementById('alertBannerText').textContent='🎤 VERBAL ALERT: '+result.summary;
+      document.getElementById('alertBanner').classList.add('show');setTimeout(()=>document.getElementById('alertBanner').classList.remove('show'),7000);
+    }
+  }catch(e){logNotif('Verbal analysis error: '+e.message)}
+}
+
+function renderVerbalResult(result,text,source){
+  const container=document.getElementById('verbalResult');const empty=container.querySelector('.vr-empty');if(empty)empty.remove();
+  if(result.verdict!=='safe'){verbalAlertCount++;const b=document.getElementById('verbalAlertBadge');b.style.display='block';b.textContent=verbalAlertCount}
+  const cats=(result.categories||[]).filter(c=>c!=='none');const phrases=result.flagged_phrases||[];
+  const card=document.createElement('div');card.className='vr-card '+result.verdict;
+  card.innerHTML='<div class="vr-header"><span class="vr-verdict '+result.verdict+'">'+(result.verdict==='danger'?'🚨':result.verdict==='warning'?'⚠':'✓')+' '+result.verdict.toUpperCase()+'</span><span class="vr-time">'+new Date().toLocaleTimeString()+' · '+source+'</span></div>'+'<div class="vr-meter"><div class="vr-fill '+result.verdict+'" style="width:'+result.severity+'%"></div></div>'+'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:0.68rem;color:var(--muted2);margin-bottom:8px">Severity: '+result.severity+'%</div>'+(cats.length?'<div class="vr-tags">'+cats.map(c=>'<span class="vr-tag">'+c+'</span>').join('')+'</div>':'')+(phrases.length?'<div style="margin-bottom:8px">'+phrases.map(p=>'<div style="font-size:0.72rem;background:rgba(255,61,61,0.08);border-left:2px solid var(--red);padding:3px 8px;margin-bottom:3px;border-radius:0 4px 4px 0;color:#ff8080;font-family:\'IBM Plex Mono\',monospace">"'+p+'"</div>').join('')+'</div>':'')+'<div class="vr-summary">'+result.summary+'</div>'+(result.recommend_action?'<div style="font-size:0.75rem;color:var(--amber);margin-top:6px">→ '+result.recommend_action+'</div>':'')+'<div style="font-size:0.78rem;color:var(--muted);border-left:2px solid var(--border2);padding-left:8px;margin-top:8px;font-style:italic">"'+text.slice(0,120)+(text.length>120?'...':'')+'"</div>';
+  container.insertBefore(card,container.firstChild);logNotif('Verbal: '+result.verdict.toUpperCase()+' — '+source);
+}
+
+function logNotif(msg){const log=document.getElementById('notifLog');const d=document.createElement('div');d.textContent='['+new Date().toLocaleTimeString()+'] '+msg;log.appendChild(d);log.scrollTop=log.scrollHeight}
+function showToast(msg,type){const c=document.getElementById('toastContainer');const t=document.createElement('div');t.className='toast '+(type||'info');const icons={success:'✓',warning:'⚠',danger:'🚨',info:'ℹ'};t.innerHTML='<div class="toast-title">'+(icons[type]||'•')+' '+msg+'</div>';c.appendChild(t);setTimeout(()=>{t.style.animation='toastOut 0.3s ease forwards';setTimeout(()=>t.remove(),300)},3500)}
+
+window.addEventListener('load',()=>{
+  initWaveform();updateStreamGuide();
+  document.getElementById('cameraView').style.display='flex';document.getElementById('verbalView').style.display='none';
+  logNotif('SafeWatch initialized. All systems ready.');
+  logNotif('Camera sources: Phone/Webcam, MJPEG, HLS, WebRTC, Snapshot.');
+  logNotif('Compatible with: go2rtc, Frigate NVR, Hikvision, Reolink, any RTSP camera via bridge.');
+  logNotif('Teachable Machine: load your model via URL or file upload.');
+  logNotif('Verbal: device mic or camera mic — real-time speech-to-text analysis.');
+  showToast('SafeWatch ready','success');
+});
+</script>
+</body>
+</html>
